@@ -186,3 +186,189 @@ def get_satellite_assessment(claim_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Assessment not found")
 
     return assessment
+
+# DYNAMIC GOOGLE EARTH ENGINE SATELLITE ASSESSMENT
+from pydantic import BaseModel, Field
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+import ee
+import google.auth
+import requests
+import os
+
+class GEEAssessmentRequest(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_m: int = Field(default=5000, ge=100, le=50000)
+    before_start: str = "2026-06-01"
+    before_end: str = "2026-10-01"
+    after_start: str = "2026-10-16"
+    after_end: str = "2026-11-08"
+
+SATELLITE_DIR = Path(__file__).resolve().parent.parent / "public" / "satellite"
+SATELLITE_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount(
+    "/satellite-images",
+    StaticFiles(directory=str(SATELLITE_DIR)),
+    name="satellite-images"
+)
+
+@app.post("/satellite-assessments/gee")
+def gee_satellite_assessment(request: GEEAssessmentRequest):
+    try:
+        project_id = "true-server-488608-f0"
+        credentials, _ = google.auth.default(
+            quota_project_id=project_id
+        )
+        credentials.refresh(
+            google.auth.transport.requests.Request()
+        )
+
+        ee.Initialize(credentials=credentials, project=project_id)
+
+        aoi = ee.Geometry.Point([
+            request.longitude, request.latitude
+        ]).buffer(request.radius_m)
+
+        collection = (
+            ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(aoi)
+            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+        )
+
+        def best_image(start, end):
+            images = collection.filterDate(start, end).sort(
+                "CLOUDY_PIXEL_PERCENTAGE"
+            )
+            if images.size().getInfo() == 0:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No suitable Sentinel-2 image found for {start} to {end}"
+                )
+            return ee.Image(images.first())
+
+        before = best_image(request.before_start, request.before_end)
+        after = best_image(request.after_start, request.after_end)
+
+        ndvi_before = before.normalizedDifference(
+            ["B8", "B4"]
+        ).rename("NDVI")
+
+        ndvi_after = after.normalizedDifference(
+            ["B8", "B4"]
+        ).rename("NDVI")
+
+        def mean_ndvi(image):
+            return image.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=aoi,
+                scale=10,
+                maxPixels=1e9
+            ).get("NDVI").getInfo()
+
+        before_value = mean_ndvi(ndvi_before)
+        after_value = mean_ndvi(ndvi_after)
+
+        if before_value is None or after_value is None:
+            raise HTTPException(
+                status_code=422,
+                detail="NDVI could not be calculated for this location."
+            )
+
+        change = (
+            ((before_value - after_value) / before_value) * 100
+            if before_value > 0 else None
+        )
+
+        def image_date(image):
+            return ee.Date(
+                image.get("system:time_start")
+            ).format("YYYY-MM-dd").getInfo()
+
+        def save_thumbnail(image, filename, ndvi=False):
+            if ndvi:
+                visual = image.visualize(
+                    min=-0.2,
+                    max=0.8,
+                    palette=["brown", "yellow", "lightgreen", "darkgreen"]
+                )
+            else:
+                visual = image.visualize(
+                    bands=["B4", "B3", "B2"],
+                    min=0,
+                    max=3000,
+                    gamma=1.3
+                )
+
+            url = visual.getThumbURL({
+                "region": aoi,
+                "dimensions": 700,
+                "format": "png"
+            })
+
+            response = requests.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {credentials.token}",
+                    "x-goog-user-project": project_id
+                },
+                timeout=60
+            )
+            response.raise_for_status()
+
+            output = SATELLITE_DIR / filename
+            output.write_bytes(response.content)
+            return f"/satellite-images/{filename}"
+
+        import uuid
+        image_id = uuid.uuid4().hex[:12]
+
+        return {
+            "location": {
+                "latitude": request.latitude,
+                "longitude": request.longitude,
+                "radius_m": request.radius_m
+            },
+            "source": "Sentinel-2 SR Harmonized",
+            "before": {
+                "date": image_date(before),
+                "cloud_cover": before.get(
+                    "CLOUDY_PIXEL_PERCENTAGE"
+                ).getInfo(),
+                "mean_ndvi": round(before_value, 4),
+                "rgb_image": save_thumbnail(
+                    before, f"{image_id}-before-rgb.png"
+                ),
+                "ndvi_image": save_thumbnail(
+                    ndvi_before, f"{image_id}-before-ndvi.png", True
+                )
+            },
+            "after": {
+                "date": image_date(after),
+                "cloud_cover": after.get(
+                    "CLOUDY_PIXEL_PERCENTAGE"
+                ).getInfo(),
+                "mean_ndvi": round(after_value, 4),
+                "rgb_image": save_thumbnail(
+                    after, f"{image_id}-after-rgb.png"
+                ),
+                "ndvi_image": save_thumbnail(
+                    ndvi_after, f"{image_id}-after-ndvi.png", True
+                )
+            },
+            "relative_ndvi_decline_percent": (
+                round(change, 2) if change is not None else None
+            ),
+            "interpretation": (
+                "Vegetation-index change only; not proof of crop damage."
+            )
+        }
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Earth Engine assessment failed: {str(error)[:500]}"
+        )

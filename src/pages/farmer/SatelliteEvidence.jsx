@@ -1,168 +1,209 @@
+
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useLanguage } from '../../context/LanguageContext';
-import { useAuth } from '../../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { SatelliteComparisonSlider } from '../../components/common/SatelliteComparisonSlider';
-import { Button } from '../../components/common/Button';
-import {
-  Satellite,
-  Info,
-  CheckCircle2,
-  Download,
-  ArrowLeft,
-  Calendar,
-  Layers,
-  Sprout,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowLeft, Satellite, MapPin, RefreshCw } from 'lucide-react';
 
 export const SatelliteEvidence = () => {
-  const { id } = useParams();
   const navigate = useNavigate();
-  const { language, t } = useLanguage();
-  const { claims } = useAuth();
 
-  // Find claim or fallback to primary claim
-  const currentClaim = claims.find((c) => c.id === id) || claims[0];
-  const [activeClaimId, setActiveClaimId] = useState(currentClaim.id);
+  const [latitude, setLatitude] = useState('16.20');
+  const [longitude, setLongitude] = useState('77.35');
+  const [radius, setRadius] = useState('5000');
+  const [beforeStart, setBeforeStart] = useState('2026-06-01');
+  const [beforeEnd, setBeforeEnd] = useState('2026-10-01');
+  const [afterStart, setAfterStart] = useState('2026-10-16');
+  const [afterEnd, setAfterEnd] = useState('2026-11-08');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const activeClaim = claims.find((c) => c.id === activeClaimId) || currentClaim;
+  const runAssessment = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setResult(null);
 
-  const cropName = language === 'hi' ? (activeClaim.cropHindi || activeClaim.crop) : activeClaim.crop;
+    try {
+      const response = await fetch('/api/satellite-assessments/gee', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          radius_m: Number(radius),
+          before_start: beforeStart,
+          before_end: beforeEnd,
+          after_start: afterStart,
+          after_end: afterEnd
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Satellite assessment failed');
+      }
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const imageUrl = path => path?.startsWith('http')
+    ? path : path;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <button
-            type="button"
-            onClick={() => navigate('/farmer/dashboard')}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer mb-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>{language === 'hi' ? '← किसान डैशबोर्ड पर वापस जाएं' : '← Back to Dashboard'}</span>
-          </button>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
-            {t('seTitle', 'Satellite Crop Health Check')}
-          </h1>
-          <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            {t('seSubtitle', 'See your field from above. Compare before and after the incident.')}
-          </p>
-        </div>
-
-        {/* Claim Selector Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {claims.slice(0, 3).map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => setActiveClaimId(c.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                activeClaimId === c.id
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              {c.id} ({c.crop})
-            </button>
-          ))}
-        </div>
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div>
+        <button onClick={() => navigate('/farmer/dashboard')}
+          className="flex items-center gap-2 text-sm text-slate-600 mb-3">
+          <ArrowLeft size={16}/> Back to Dashboard
+        </button>
+        <h1 className="text-2xl md:text-3xl font-bold text-slate-900">
+          Satellite Crop Health Assessment
+        </h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Analyze vegetation changes using real Sentinel-2 satellite imagery.
+        </p>
       </div>
 
-      {/* Main Satellite Viewer Box */}
-      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200/80 shadow-xs space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono font-bold bg-slate-100 px-2.5 py-0.5 rounded text-slate-700">
-                {activeClaim.id}
-              </span>
-              <span className="text-sm font-extrabold text-slate-900">{cropName}</span>
-            </div>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {activeClaim.village}, {activeClaim.district} • Khasra: #{activeClaim.surveyNumber}
+      <form onSubmit={runAssessment}
+        className="bg-white rounded-2xl border p-5 space-y-4 shadow-sm">
+        <div className="flex items-center gap-2 font-bold text-slate-800">
+          <MapPin className="text-emerald-600"/> Select study location
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label className="text-sm">Latitude
+            <input required type="number" step="any" min="-90" max="90"
+              value={latitude} onChange={e => setLatitude(e.target.value)}
+              className="w-full border rounded-lg p-2 mt-1"/>
+          </label>
+          <label className="text-sm">Longitude
+            <input required type="number" step="any" min="-180" max="180"
+              value={longitude} onChange={e => setLongitude(e.target.value)}
+              className="w-full border rounded-lg p-2 mt-1"/>
+          </label>
+          <label className="text-sm">Study radius (metres)
+            <input required type="number" min="100" max="50000"
+              value={radius} onChange={e => setRadius(e.target.value)}
+              className="w-full border rounded-lg p-2 mt-1"/>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <p className="font-semibold text-sm">Before date range</p>
+            <label className="text-xs">Start
+              <input type="date" required value={beforeStart}
+                onChange={e => setBeforeStart(e.target.value)}
+                className="w-full border rounded-lg p-2 mt-1"/>
+            </label>
+            <label className="text-xs">End
+              <input type="date" required value={beforeEnd}
+                onChange={e => setBeforeEnd(e.target.value)}
+                className="w-full border rounded-lg p-2 mt-1"/>
+            </label>
+          </div>
+          <div className="space-y-2">
+            <p className="font-semibold text-sm">After date range</p>
+            <label className="text-xs">Start
+              <input type="date" required value={afterStart}
+                onChange={e => setAfterStart(e.target.value)}
+                className="w-full border rounded-lg p-2 mt-1"/>
+            </label>
+            <label className="text-xs">End
+              <input type="date" required value={afterEnd}
+                onChange={e => setAfterEnd(e.target.value)}
+                className="w-full border rounded-lg p-2 mt-1"/>
+            </label>
+          </div>
+        </div>
+
+        <button disabled={loading} type="submit"
+          className="w-full sm:w-auto flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold rounded-xl px-6 py-3">
+          {loading ? <RefreshCw className="animate-spin" size={18}/> : <Satellite size={18}/>}
+          {loading ? 'Analyzing satellite images...' : 'Run Satellite Assessment'}
+        </button>
+      </form>
+
+      {error && (
+        <div className="bg-rose-50 text-rose-700 border border-rose-200 p-4 rounded-xl">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div className="space-y-5">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+            <p className="font-bold text-emerald-900">Assessment completed</p>
+            <p className="text-sm text-emerald-800">
+              Sentinel-2 SR Harmonized · {result.location.latitude}, {result.location.longitude}
+              · {result.location.radius_m} m radius
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 px-3 py-1 rounded-full flex items-center gap-1.5">
-              <Satellite className="w-3.5 h-3.5" />
-              <span>{language === 'hi' ? 'सत्यापित उपग्रह साक्ष्य' : 'Verified Sentinel-2 Pass'}</span>
-            </span>
-          </div>
-        </div>
-
-        {/* Interactive Comparison Slider */}
-        <SatelliteComparisonSlider
-          beforeImage={activeClaim.satelliteImages.before}
-          afterImage={activeClaim.satelliteImages.after}
-          beforeLabel={language === 'hi' ? 'आपदा पूर्व (स्वस्थ फसल)' : 'Pre-Disaster (Healthy)'}
-          afterLabel={language === 'hi' ? 'आपदा उपरांत (क्षतिग्रस्त)' : 'Post-Disaster (Damaged)'}
-          ndviBefore={activeClaim.satelliteImages.ndviBefore}
-          ndviAfter={activeClaim.satelliteImages.ndviAfter}
-          damagePercentage={activeClaim.damagePercentage}
-          satelliteDate={activeClaim.satelliteImages.satellitePassDate || '15 Aug 2026'}
-          cloudCover={activeClaim.satelliteImages.cloudCover || '2.1%'}
-        />
-
-        {/* Easy Color Guide for Farmers */}
-        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-          <div className="flex items-center gap-2">
-            <Info className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span className="text-xs font-bold text-slate-800">
-              {language === 'hi' ? 'रंगों का सरल अर्थ (किसान मार्गदर्शिका):' : 'How to read these satellite images:'}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="flex items-start gap-2.5 p-2.5 bg-white rounded-xl border border-slate-100">
-              <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 shrink-0 mt-0.5" />
-              <p className="text-slate-600">
-                <strong className="text-emerald-800">
-                  {language === 'hi' ? 'हरा रंग:' : 'Bright Green:'}
-                </strong>{' '}
-                {language === 'hi'
-                  ? 'स्वस्थ, हरी-भरी और खड़ी फसल को दर्शाता है।'
-                  : 'Indicates healthy, flourishing standing crops with active chlorophyll.'}
-              </p>
-            </div>
-
-            <div className="flex items-start gap-2.5 p-2.5 bg-white rounded-xl border border-slate-100">
-              <span className="w-3.5 h-3.5 rounded-full bg-rose-500 shrink-0 mt-0.5" />
-              <p className="text-slate-600">
-                <strong className="text-rose-800">
-                  {language === 'hi' ? 'लाल / गहरा भूरा रंग:' : 'Red / Brown:'}
-                </strong>{' '}
-                {language === 'hi'
-                  ? 'पानी में डूबी हुई, सड़ी या सूखी हुई नष्ट फसल को दर्शाता है।'
-                  : 'Indicates flood inundation, lodged stems, or scorched crop canopy.'}
-              </p>
+          <div className="bg-white border rounded-2xl p-4 sm:p-6 space-y-4">
+            <h2 className="font-bold text-lg">Satellite image comparison</h2>
+            <SatelliteComparisonSlider
+              beforeImage={imageUrl(result.before.rgb_image)}
+              afterImage={imageUrl(result.after.rgb_image)}
+              beforeLabel={`Before · ${result.before.date}`}
+              afterLabel={`After · ${result.after.date}`}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[result.before, result.after].map((item, index) => (
+                <div key={index} className="border rounded-xl p-4">
+                  <p className="font-bold">{index === 0 ? 'Before' : 'After'}</p>
+                  <p className="text-sm text-slate-500">{item.date}</p>
+                  <p className="text-2xl font-bold text-emerald-700 mt-2">
+                    NDVI: {item.mean_ndvi}
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    Cloud cover: {item.cloud_cover.toFixed(2)}%
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
 
-        {/* AI Confidence and Download Certificate */}
-        <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-            <span>
-              {language === 'hi'
-                ? `सत्यापन विश्वसनीयता: ${activeClaim.aiConfidence}% (मान्यता प्राप्त)`
-                : `AI Confidence Score: ${activeClaim.aiConfidence}% (Compliant with PMFBY Spectral Guidelines)`}
-            </span>
+          <div className="bg-white border rounded-2xl p-5 space-y-3">
+            <h2 className="font-bold">NDVI vegetation maps</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-semibold mb-2">Before · {result.before.date}</p>
+                <img src={imageUrl(result.before.ndvi_image)}
+                  alt="Before NDVI map" className="w-full rounded-xl"/>
+              </div>
+              <div>
+                <p className="text-sm font-semibold mb-2">After · {result.after.date}</p>
+                <img src={imageUrl(result.after.ndvi_image)}
+                  alt="After NDVI map" className="w-full rounded-xl"/>
+              </div>
+            </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            icon={Download}
-            onClick={() => alert(language === 'hi' ? 'उपग्रह सत्यापन प्रमाणपत्र डाउनलोड हो रहा है...' : 'Downloading Satellite Verification Certificate PDF...')}
-          >
-            {language === 'hi' ? 'सत्यापन प्रमाणपत्र डाउनलोड करें' : 'Download Satellite Certificate'}
-          </Button>
+          <div className="bg-slate-900 text-white rounded-2xl p-5">
+            <p className="text-sm text-slate-300">Relative NDVI decline</p>
+            <p className="text-4xl font-bold mt-1">
+              {result.relative_ndvi_decline_percent === null
+                ? 'Not calculated'
+                : `${result.relative_ndvi_decline_percent}%`}
+            </p>
+            <p className="text-sm text-slate-300 mt-3">
+              {result.interpretation}
+            </p>
+          </div>
         </div>
-      </div>
+      )}
+
+      <p className="text-xs text-slate-500">
+        Note: This is a regional study-area assessment. NDVI variation alone
+        does not establish insured-field damage. Field boundaries, crop type,
+        season and incident timing must be considered.
+      </p>
     </div>
   );
 };
