@@ -2,3 +2,7 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 pydantic
+earthengine-api
+google-auth
+requests
+psycopg[binary]
