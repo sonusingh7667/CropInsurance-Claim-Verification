@@ -2,6 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/api/:path*",
+      "destination": "https://cropsure-api.onrender.com/:path*"
+    },
+    {
+      "source": "/satellite-images/:path*",
+      "destination": "https://cropsure-api.onrender.com/satellite-images/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

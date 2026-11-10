@@ -34,20 +34,25 @@ export const OfficerClaimReview = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusUpdatedAlert, setStatusUpdatedAlert] = useState(false);
 
-  const handleActionConfirm = () => {
+  const handleActionConfirm = async () => {
     setIsProcessing(true);
-    setTimeout(() => {
+
+    try {
       let nextStatus = claim.status;
       if (modalAction === 'approve') nextStatus = 'approved';
       if (modalAction === 'reject') nextStatus = 'rejected';
       if (modalAction === 'inspect') nextStatus = 'under_review';
 
-      updateClaimStatus(claim.id, nextStatus, remarks);
-      setIsProcessing(false);
+      await updateClaimStatus(claim.id, nextStatus, remarks);
+
       setModalAction(null);
       setStatusUpdatedAlert(true);
       setTimeout(() => setStatusUpdatedAlert(false), 3000);
-    }, 600);
+    } catch (error) {
+      alert(error.message || 'Could not update claim.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (

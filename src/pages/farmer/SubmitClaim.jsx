@@ -100,23 +100,28 @@ export const SubmitClaim = () => {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
 
-    setTimeout(() => {
-      // Calculate estimated loss compensation
-      const estimatedAmt = Math.round(Number(formData.areaAcres) * 16000 * (Number(formData.damagePercentage) / 100));
+    try {
+      const estimatedAmt = Math.round(
+        Number(formData.areaAcres) * 16000 *
+        (Number(formData.damagePercentage) / 100)
+      );
 
-      const newClaim = addClaim({
+      const newClaim = await addClaim({
         ...formData,
         estimatedLoss: estimatedAmt,
       });
 
-      setIsSubmitting(false);
       setCreatedClaimId(newClaim.id);
       setShowSuccessModal(true);
-    }, 1000);
+    } catch (error) {
+      alert(error.message || 'Unable to submit claim. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (

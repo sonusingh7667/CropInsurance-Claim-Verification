@@ -1,10 +1,11 @@
-import React, { createContext, useContext, useState } from 'react';
-import { initialClaims } from '../data/mockClaims';
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
 
 const AuthContext = createContext();
+const API = 'https://cropsure-api.onrender.com';
 
 const defaultFarmer = {
-  id: 'FARM-9921',
+  id: 1,
   name: 'Rameshwar Patil (रामेश्वर पाटिल)',
   phone: '+91 98231 44021',
   aadhaar: 'XXXX-XXXX-4812',
@@ -28,145 +29,211 @@ const defaultOfficer = {
   avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=256',
 };
 
+const makeTimeline = (status, date) => [
+  {
+    stage: 'submitted',
+    title: 'Claim Submitted',
+    titleHindi: 'दावा दर्ज किया गया',
+    date,
+    completed: true,
+    notes: 'Claim registered in the CropSure backend.',
+  },
+  {
+    stage: 'satellite_verified',
+    title: 'Satellite AI Assessment',
+    titleHindi: 'उपग्रह एआई स्कैन',
+    date: status === 'submitted' ? 'Pending' : 'Assessment pending',
+    completed: false,
+    notes: 'Satellite assessment is handled separately.',
+  },
+  {
+    stage: 'officer_review',
+    title: 'Officer Approval',
+    titleHindi: 'अधिकारी सत्यापन',
+    date: 'Pending',
+    completed: ['under_review', 'approved'].includes(status),
+    notes: 'Verification by the district officer.',
+  },
+  {
+    stage: 'paid',
+    title: 'Direct Bank Transfer',
+    titleHindi: 'बैंक खाते में भुगतान',
+    date: 'Pending',
+    completed: status === 'paid',
+    notes: 'Payment is not initiated automatically.',
+  },
+];
+
+const mapClaim = (c, farmer) => {
+  const date = c.incident_date || new Date().toISOString().slice(0, 10);
+  const filingDate = c.created_at
+    ? new Date(c.created_at).toLocaleDateString('en-IN')
+    : date;
+
+  return {
+    id: c.claim_number,
+    backendId: c.id,
+    farmerId: c.farmer_id,
+    farmerName: farmer?.name || 'Registered Farmer',
+    farmerPhone: farmer?.phone || '',
+    district: farmer?.district || '',
+    village: farmer?.village || '',
+    state: farmer?.state || '',
+    crop: c.crop,
+    cropHindi: c.crop,
+    areaAcres: farmer?.land_size_acres || 0,
+    surveyNumber: 'Not provided',
+    disasterType: c.disaster_type,
+    disasterTypeHindi: c.disaster_type,
+    dateOfIncident: date,
+    filingDate,
+    estimatedLoss: Number(c.estimated_loss || 0),
+    damagePercentage: 0,
+    aiConfidence: 0,
+    aiVerdict: 'Awaiting satellite assessment',
+    officerRemarks: c.officer_remarks || '',
+    satelliteImages: {
+      before: '',
+      after: '',
+      ndviBefore: 0,
+      ndviAfter: 0,
+      damageZonePercentage: 0,
+    },
+    timeline: makeTimeline(c.status, filingDate),
+    status: c.status,
+  };
+};
+
 export const AuthProvider = ({ children }) => {
-  const [role, setRole] = useState('farmer'); // 'farmer' | 'officer'
+  const [role, setRole] = useState('farmer');
   const [isFarmerLoggedIn, setIsFarmerLoggedIn] = useState(true);
   const [isOfficerLoggedIn, setIsOfficerLoggedIn] = useState(true);
   const [farmer, setFarmer] = useState(defaultFarmer);
   const [officer, setOfficer] = useState(defaultOfficer);
-  const [claims, setClaims] = useState(initialClaims);
+  const [claims, setClaims] = useState([]);
+  const [loadingClaims, setLoadingClaims] = useState(true);
+  const [apiError, setApiError] = useState('');
 
-  const farmerLogin = (credentials) => {
+  const refreshClaims = async () => {
+    setLoadingClaims(true);
+    try {
+      const [farmersRes, claimsRes] = await Promise.all([
+        fetch(`${API}/farmers`),
+        fetch(`${API}/claims`),
+      ]);
+
+      if (!farmersRes.ok || !claimsRes.ok) {
+        throw new Error('Could not load records from CropSure server.');
+      }
+
+      const farmers = await farmersRes.json();
+      const records = await claimsRes.json();
+      const currentFarmer = farmers.find(f => f.id === defaultFarmer.id)
+        || farmers.find(f => f.phone === defaultFarmer.phone)
+        || defaultFarmer;
+
+      setFarmer(prev => ({ ...prev, ...currentFarmer }));
+      setClaims(records.map(c => {
+        const owner = farmers.find(f => f.id === c.farmer_id);
+        return mapClaim(c, owner);
+      }));
+      setApiError('');
+    } catch (error) {
+      setApiError(error.message);
+    } finally {
+      setLoadingClaims(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshClaims();
+  }, []);
+
+  const farmerLogin = () => {
     setIsFarmerLoggedIn(true);
     setRole('farmer');
   };
 
-  const farmerLogout = () => {
-    setIsFarmerLoggedIn(false);
-  };
+  const farmerLogout = () => setIsFarmerLoggedIn(false);
 
-  const officerLogin = (credentials) => {
+  const officerLogin = () => {
     setIsOfficerLoggedIn(true);
     setRole('officer');
   };
 
-  const officerLogout = () => {
-    setIsOfficerLoggedIn(false);
-  };
+  const officerLogout = () => setIsOfficerLoggedIn(false);
 
-  const addClaim = (newClaimData) => {
-    const newId = `CS-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-    const fullClaim = {
-      id: newId,
-      farmerId: farmer.id,
-      farmerName: farmer.name,
-      farmerPhone: farmer.phone,
-      district: newClaimData.district || farmer.district,
-      village: newClaimData.village || farmer.village,
-      crop: newClaimData.crop || 'Soybean',
-      cropHindi: newClaimData.cropHindi || 'सोयाबीन',
-      surveyNumber: newClaimData.surveyNumber || '142/A/2',
-      areaAcres: Number(newClaimData.areaAcres) || 3.0,
-      disasterType: newClaimData.disasterType || 'Unseasonal Heavy Rainfall & Waterlogging',
-      disasterTypeHindi: newClaimData.disasterTypeHindi || 'अतिवृष्टि एवं जलभराव',
-      dateOfIncident: newClaimData.dateOfIncident || new Date().toISOString().split('T')[0],
-      filingDate: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-      estimatedLoss: Number(newClaimData.estimatedLoss) || 45000,
-      status: 'submitted',
-      damagePercentage: Number(newClaimData.damagePercentage) || 68,
-      aiConfidence: 94,
-      aiVerdict: 'Automated satellite scan initiated. Sentinel-2 spectral difference pending.',
-      satelliteImages: {
-        before: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&q=80&w=1200',
-        after: 'https://images.unsplash.com/photo-1547683905-f686c993aae5?auto=format&fit=crop&q=80&w=1200',
-        ndviBefore: 0.78,
-        ndviAfter: 0.22,
-        damageZonePercentage: 71,
-      },
-      timeline: [
-        {
-          stage: 'submitted',
-          title: 'Claim Submitted',
-          titleHindi: 'दावा दर्ज किया गया',
-          date: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-          completed: true,
-          notes: 'Application registered with land survey verification.'
-        },
-        {
-          stage: 'satellite_verified',
-          title: 'Satellite AI Assessment',
-          titleHindi: 'उपग्रह एआई स्कैन',
-          date: 'In Progress (ETA 24h)',
-          completed: false,
-          notes: 'Sentinel-2 Multispectral pass scheduled.'
-        },
-        {
-          stage: 'officer_review',
-          title: 'Officer Approval',
-          titleHindi: 'अधिकारी सत्यापन',
-          date: 'Pending',
-          completed: false,
-          notes: 'Verification by District Agriculture Officer.'
-        },
-        {
-          stage: 'paid',
-          title: 'Direct Bank Transfer',
-          titleHindi: 'बैंक खाते में भुगतान',
-          date: 'Pending',
-          completed: false,
-          notes: 'Aadhaar DBT disbursement.'
-        }
-      ]
+  const addClaim = async (data) => {
+    const response = await fetch(`${API}/claims`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        farmer_id: Number(farmer.id),
+        crop: data.crop,
+        disaster_type: data.disasterType,
+        incident_date: data.dateOfIncident,
+        estimated_loss: Number(data.estimatedLoss),
+      }),
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.detail || 'Claim submission failed.');
+    }
+
+    const newClaim = {
+      ...mapClaim(result, farmer),
+      district: data.district || farmer.district,
+      village: data.village || farmer.village,
+      areaAcres: Number(data.areaAcres) || 0,
+      surveyNumber: data.surveyNumber || 'Not provided',
+      damagePercentage: Number(data.damagePercentage) || 0,
+      description: data.description || '',
     };
 
-    setClaims(prev => [fullClaim, ...prev]);
-    return fullClaim;
+    setClaims(prev => [newClaim, ...prev]);
+    return newClaim;
   };
 
-  const updateClaimStatus = (claimId, newStatus, officerRemarks = '') => {
-    setClaims(prev =>
-      prev.map(c => {
-        if (c.id === claimId) {
-          const updatedTimeline = c.timeline.map(t => {
-            if (newStatus === 'approved' || newStatus === 'paid') {
-              return { ...t, completed: true };
-            }
-            if (newStatus === 'satellite_verified' && (t.stage === 'submitted' || t.stage === 'satellite_verified')) {
-              return { ...t, completed: true };
-            }
-            return t;
-          });
+  const updateClaimStatus = async (claimId, newStatus, officerRemarks = '') => {
+    const claim = claims.find(c => c.id === claimId);
+    if (!claim) throw new Error('Claim not found.');
 
-          return {
+    const response = await fetch(`${API}/claims/${claim.backendId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status: newStatus,
+        officer_remarks: officerRemarks,
+      }),
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.detail || 'Could not update claim status.');
+    }
+
+    setClaims(prev => prev.map(c =>
+      c.id === claimId
+        ? {
             ...c,
-            status: newStatus,
-            officerRemarks: officerRemarks || c.officerRemarks,
-            timeline: updatedTimeline,
-          };
-        }
-        return c;
-      })
-    );
+            status: result.status,
+            officerRemarks: result.officer_remarks || '',
+            timeline: makeTimeline(result.status, c.filingDate),
+          }
+        : c
+    ));
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        role,
-        setRole,
-        isFarmerLoggedIn,
-        isOfficerLoggedIn,
-        farmer,
-        officer,
-        claims,
-        farmerLogin,
-        farmerLogout,
-        officerLogin,
-        officerLogout,
-        addClaim,
-        updateClaimStatus,
-      }}
-    >
+    <AuthContext.Provider value={{
+      role, setRole,
+      isFarmerLoggedIn, isOfficerLoggedIn,
+      farmer, setFarmer, officer, setOfficer,
+      claims, loadingClaims, apiError, refreshClaims,
+      farmerLogin, farmerLogout, officerLogin, officerLogout,
+      addClaim, updateClaimStatus,
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -174,8 +241,6 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
